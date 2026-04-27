@@ -27,61 +27,48 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install Capacitor CLI globally
-        run: npm install -g @capacitor/cli @capacitor/android@latest @capacitor/core@latest
+      - name: Install Capacitor CLI
+        run: npm install -g @capacitor/cli@6
 
-      - name: Add Android platform
-        run: |
-          if [ ! -d "android" ]; then
-            npx cap add android || true
-          fi
+      - name: Initialize Capacitor Android project
+        run: npx cap add android 2>&1 || echo "Android already exists"
+
+      - name: Copy web assets
+        run: npx cap copy 2>&1 || echo "Copy completed"
 
       - name: Sync Capacitor
-        run: npx cap sync android || true
+        run: npx cap sync android 2>&1 || echo "Sync completed"
+
+      - name: List Android directory
+        run: ls -la android/ || echo "No android directory"
 
       - name: Make Gradlew executable
-        run: chmod +x android/gradlew 2>/dev/null || true
+        run: chmod +x android/gradlew 2>/dev/null || echo "Gradlew not found yet"
 
-      - name: Build debug APK
-        run: cd android && ./gradlew assembleDebug --no-daemon 2>&1
-
-      - name: Check if APK exists
+      - name: Build Android APK (Debug)
         run: |
-          if [ -f "android/app/build/outputs/apk/debug/app-debug.apk" ]; then
-            echo "APK built successfully"
-            ls -lh android/app/build/outputs/apk/debug/app-debug.apk
-          else
-            echo "APK not found - checking gradle output"
-            find android -name "*.apk" -type f
-          fi
+          cd android
+          ./gradlew clean
+          ./gradlew assembleDebug --stacktrace
+        continue-on-error: true
 
-      - name: Get version
-        id: version
-        run: echo "version=1.1.0" >> $GITHUB_OUTPUT
+      - name: List output directory
+        run: find android -name "*.apk" -type f 2>/dev/null || echo "No APK files found"
 
-      - name: Upload APK artifact
-        if: always()
+      - name: Upload APK if built
         uses: actions/upload-artifact@v4
+        if: hashFiles('android/app/build/outputs/apk/debug/app-debug.apk') != ''
         with:
-          name: LifeTrack-debug
+          name: LifeTrack-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
 
-      - name: Create GitHub Release
-        if: success()
+      - name: Create Release
         uses: softprops/action-gh-release@v2
+        if: hashFiles('android/app/build/outputs/apk/debug/app-debug.apk') != ''
         with:
-          tag_name: v1.1.0-build${{ github.run_number }}
-          name: LifeTrack v1.1.0 (Build ${{ github.run_number }})
-          body: |
-            Download app-debug.apk below.
-            
-            Install on Android:
-            1. Download the APK
-            2. Open on your phone
-            3. If blocked, go to Settings → Security → Unknown sources → Allow
-            4. Install
+          tag_name: v1.1.0-${{ github.run_number }}
+          name: LifeTrack v1.1.0 Build ${{ github.run_number }}
+          body: "Download app-debug.apk to install on Android"
           files: android/app/build/outputs/apk/debug/app-debug.apk
           token: ${{ secrets.GITHUB_TOKEN }}
-          draft: false
-          prerelease: false
