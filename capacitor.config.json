@@ -1,7 +1,7 @@
 {
   "appId": "com.lifetrack.app",
   "appName": "LifeTrack",
-  "webDir": ".",
+  "webDir": "www",
   "server": {
     "androidScheme": "https"
   },
