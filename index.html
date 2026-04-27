@@ -224,6 +224,7 @@ main{padding:16px 16px 40px;max-width:600px;margin:0 auto;}
 .modal-actions{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 @keyframes slideUp{from{transform:translateY(40px);opacity:0}to{transform:translateY(0);opacity:1}}
+@keyframes splashBar{0%{transform:translateX(-100%)}50%{transform:translateX(0)}100%{transform:translateX(100%)}}
 
 /* HABIT CHECKBOX */
 .habit-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);}
@@ -359,6 +360,15 @@ main{padding:16px 16px 40px;max-width:600px;margin:0 auto;}
 </style>
 </head>
 <body>
+<!-- SPLASH SCREEN -->
+<div id="splash" style="position:fixed;inset:0;z-index:9999;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity .4s ease">
+  <img src="lt-icon-192.png" width="80" height="80" style="border-radius:20px;margin-bottom:20px" onerror="this.style.display='none'"/>
+  <div style="font-family:var(--font-display);font-size:28px;font-weight:700;color:var(--text);margin-bottom:8px">LifeTrack</div>
+  <div style="font-size:13px;color:var(--muted)">Your Life, Tracked</div>
+  <div style="margin-top:32px;width:40px;height:2px;background:var(--border);border-radius:2px;overflow:hidden">
+    <div style="height:100%;background:var(--accent);animation:splashBar 1.2s ease-in-out infinite;border-radius:2px"></div>
+  </div>
+</div>
 <div id="app">
 <nav>
   <button class="nav-hamburger" onclick="toggleDropdown()" aria-label="Menu">
@@ -1550,14 +1560,15 @@ function snoozeAlarmModal(id){
 const _alertedReminders=new Set();
 
 // ─── Capacitor Native Notifications ───
-const isNative = () => window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform();
+const isNative = () => !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 
 async function getLocalNotifications(){
-  if(!isNative())return null;
+  if(!isNative()) return null;
   try{
-    const {LocalNotifications}=await import('https://cdn.jsdelivr.net/npm/@capacitor/local-notifications@6/+esm');
-    return LocalNotifications;
-  }catch{return null;}
+    // Capacitor plugins are injected as globals in the native APK
+    const LN = window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications;
+    return LN || null;
+  }catch{ return null; }
 }
 
 async function requestNativeNotifPerm(){
@@ -1836,7 +1847,7 @@ async function delNote(id){
 function renderSettings(){
   const s=getSettings();
   const avatarImg=localStorage.getItem('lt_avatar');
-  const notifStatus='Notification' in window?Notification.permission:'not supported';
+  const notifStatus = isNative() ? 'native (always on)' : ('Notification' in window ? Notification.permission : 'not supported');
   return`
   <div class="page-title">Settings</div>
   <div class="page-sub">Your preferences and account</div>
@@ -2094,30 +2105,44 @@ async function requestNotifPermIfNeeded(){
 
 async function init(){
   applyTheme();
-  isOnline=navigator.onLine;
+  isOnline = navigator.onLine;
+
+  // Show dashboard immediately — don't wait for network
+  go('dashboard');
+  // Dismiss splash
+  setTimeout(()=>{
+    const s=document.getElementById('splash');
+    if(s){s.style.opacity='0';setTimeout(()=>s.remove(),400);}
+  }, 600);
+
+  // Network check in background
   if(isOnline){
     try{
       await sb.from('lt_reminders').select('count',{count:'exact',head:true});
       setSync('live','Live');
     }catch{
-      // DB reachable but query failed — still treat as online, individual ops will retry
       setSync('live','Live');
     }
   }else{
     setSync('err','Offline');
   }
+
+  // Service worker
   if('serviceWorker' in navigator){
-    try{await navigator.serviceWorker.register('lt-sw.js');await navigator.serviceWorker.ready;}catch(e){}
+    try{ await navigator.serviceWorker.register('lt-sw.js'); }catch(e){}
   }
-  // Native APK setup
-  if(isNative()){
-    await setupNotificationChannels();
-    await requestNativeNotifPerm();
-  } else {
-    await requestNotifPermIfNeeded();
-  }
+
+  // Notifications — never block dashboard
+  try{
+    if(isNative()){
+      await setupNotificationChannels();
+      await requestNativeNotifPerm();
+    } else {
+      await requestNotifPermIfNeeded();
+    }
+  }catch(e){ console.warn('Notif setup failed',e); }
+
   updateDrawerProfile();
-  go('dashboard');
   checkReminders();
   scheduleAllReminders();
   scheduleAllEvents();
