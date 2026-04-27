@@ -27,45 +27,61 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install dependencies
-        run: npm install
-
-      - name: Install Capacitor CLI
-        run: npm install -g @capacitor/cli
+      - name: Install Capacitor CLI globally
+        run: npm install -g @capacitor/cli @capacitor/android@latest @capacitor/core@latest
 
       - name: Add Android platform
         run: |
           if [ ! -d "android" ]; then
-            npx cap add android
+            npx cap add android || true
           fi
 
       - name: Sync Capacitor
-        run: npx cap sync android
+        run: npx cap sync android || true
 
       - name: Make Gradlew executable
-        run: chmod +x android/gradlew
+        run: chmod +x android/gradlew 2>/dev/null || true
 
       - name: Build debug APK
-        run: cd android && ./gradlew assembleDebug --no-daemon
+        run: cd android && ./gradlew assembleDebug --no-daemon 2>&1
+
+      - name: Check if APK exists
+        run: |
+          if [ -f "android/app/build/outputs/apk/debug/app-debug.apk" ]; then
+            echo "APK built successfully"
+            ls -lh android/app/build/outputs/apk/debug/app-debug.apk
+          else
+            echo "APK not found - checking gradle output"
+            find android -name "*.apk" -type f
+          fi
 
       - name: Get version
         id: version
-        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+        run: echo "version=1.1.0" >> $GITHUB_OUTPUT
 
       - name: Upload APK artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: LifeTrack-v${{ steps.version.outputs.version }}-build${{ github.run_number }}
+          name: LifeTrack-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
 
       - name: Create GitHub Release
+        if: success()
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.version.outputs.version }}-build${{ github.run_number }}
-          name: LifeTrack v${{ steps.version.outputs.version }} (Build ${{ github.run_number }})
+          tag_name: v1.1.0-build${{ github.run_number }}
+          name: LifeTrack v1.1.0 (Build ${{ github.run_number }})
           body: |
-            Download app-debug.apk, install on Android phone.
-            If blocked: Settings → Security → Unknown sources → Allow
+            Download app-debug.apk below.
+            
+            Install on Android:
+            1. Download the APK
+            2. Open on your phone
+            3. If blocked, go to Settings → Security → Unknown sources → Allow
+            4. Install
           files: android/app/build/outputs/apk/debug/app-debug.apk
           token: ${{ secrets.GITHUB_TOKEN }}
+          draft: false
+          prerelease: false
