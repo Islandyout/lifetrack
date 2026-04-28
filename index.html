@@ -471,10 +471,10 @@ const C={
 // ═══════════════════════════════════
 //  SETTINGS
 // ═══════════════════════════════════
-function getSettings(){return C.getObj('lt_settings',{currency:'JMD $',weeklyBudget:20000,monthlyBudget:80000,name:'',waterGoal:8,sleepGoal:8});}
+const DEFAULTS={currency:'JMD $',monthlyBudget:80000,name:'',waterGoal:8,sleepGoal:8};
+function getSettings(){return C.getObj('lt_settings',DEFAULTS);}
 function saveSettings(s){C.setObj('lt_settings',s);sbSet('lt_settings_store',{id:'main',...s});}
-function cur(){return getSettings().currency||'JMD $';}
-function fmt(n){return cur()+' '+Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2});}
+function fmt(n){const c=getSettings().currency||'JMD $';return c+' '+Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2});}
 
 // ═══════════════════════════════════
 //  UTILS
@@ -492,10 +492,10 @@ function _refreshTodayCache(){_todayCache='';const now=new Date();const msUntilM
 _refreshTodayCache();function p2(n){return String(n).padStart(2,'0');}
 function fmtDate(s){if(!s)return'—';return new Date(s+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});}
 function fmtTime(s){if(!s)return'';try{const[h,m]=s.split(':');const H=parseInt(h);return`${H>12?H-12:H||12}:${m} ${H>=12?'PM':'AM'}`;}catch{return s;}}
-function thisMonth(){const d=new Date();return`${d.getFullYear()}-${p2(d.getMonth()+1)}`;}
+const thisMonth=()=>today().slice(0,7);
 function esc(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function v(id){const el=document.getElementById(id);return el?el.value:'';}
-function emptyState(icon,txt){return`<div class="empty"><div class="empty-text">${txt}</div></div>`;}
+function emptyState(txt){return`<div class="empty"><div class="empty-text">${txt}</div></div>`;}
 function catColor(cat){const map={Food:'var(--orange)',Transport:'var(--blue)',Health:'var(--blue)',Bills:'var(--red)',Shopping:'var(--purple)',Entertainment:'var(--gold)',Savings:'var(--accent2)',Other:'var(--muted)'};return map[cat]||'var(--muted)';}
 
 // ═══════════════════════════════════
@@ -553,20 +553,13 @@ async function flushQ(){
 // ═══════════════════════════════════
 //  DROPDOWN / SIDEBAR NAVIGATION
 // ═══════════════════════════════════
-function toggleDropdown(){
-  const dd=document.getElementById('navDropdown');
-  const overlay=document.getElementById('dropdownOverlay');
-  const hamburger=document.querySelector('.nav-hamburger');
-  const open=dd.classList.toggle('open');
-  overlay.classList.toggle('open',open);
-  hamburger?.classList.toggle('open',open);
-  if(open) updateDrawerProfile();
+function _drawerState(open){
+  document.getElementById('navDropdown').classList.toggle('open',open);
+  document.getElementById('dropdownOverlay').classList.toggle('open',open);
+  document.querySelector('.nav-hamburger')?.classList.toggle('open',open);
 }
-function closeDropdown(){
-  document.getElementById('navDropdown').classList.remove('open');
-  document.getElementById('dropdownOverlay').classList.remove('open');
-  document.querySelector('.nav-hamburger')?.classList.remove('open');
-}
+function toggleDropdown(){const open=!document.getElementById('navDropdown').classList.contains('open');_drawerState(open);if(open)updateDrawerProfile();}
+function closeDropdown(){_drawerState(false);}
 function goDropdown(p){
   closeDropdown();
   go(p);
@@ -653,12 +646,13 @@ async function renderPage(){
 }
 
 function updateBadges(){
+  const now=new Date().toISOString(),td=today();
   const tasks=C.get('cache_lt_tasks')||[];
-  const overdue=tasks.filter(t=>t.status!=='done'&&t.due_date&&t.due_date<today()).length;
+  const overdue=tasks.filter(t=>t.status!=='done'&&t.due_date&&t.due_date<td).length;
   const tb=document.getElementById('ddTaskBadge');
   if(tb){tb.textContent=overdue;tb.style.display=overdue?'inline':'none';}
   const reminders=C.get('cache_lt_reminders')||[];
-  const due=reminders.filter(r=>!r.done&&r.due_at&&r.due_at<=new Date().toISOString()).length;
+  const due=reminders.filter(r=>!r.done&&r.due_at&&r.due_at<=now).length;
   const rb=document.getElementById('ddReminderBadge');
   if(rb){rb.textContent=due;rb.style.display=due?'inline':'none';}
 }
@@ -688,8 +682,8 @@ async function renderDashboard(){
   const [expenses,income,tasks,reminders]=await Promise.all([
     sbGet('lt_expenses'),sbGet('lt_income'),sbGet('lt_tasks'),sbGet('lt_reminders')
   ]);
-  const now=new Date();
-  const mo=`${now.getFullYear()}-${p2(now.getMonth()+1)}`;
+  const now=new Date(),td=today();
+  const mo=td.slice(0,7);
   const moExp=expenses.filter(e=>(e.date||'').startsWith(mo)).reduce((a,e)=>a+Number(e.amount||0),0);
   const moInc=income.filter(i=>(i.date||'').startsWith(mo)).reduce((a,i)=>a+Number(i.amount||0),0);
   const budget=Number(s.monthlyBudget)||80000;
@@ -698,7 +692,7 @@ async function renderDashboard(){
   const r=70,circ=2*Math.PI*r;
   const fill=circ*(1-pct/100);
   const pendingTasks=tasks.filter(t=>t.status!=='done').length;
-  const overdueTasks=tasks.filter(t=>t.status!=='done'&&t.due_date&&t.due_date<today()).length;
+  const overdueTasks=tasks.filter(t=>t.status!=='done'&&t.due_date&&t.due_date<td).length;
   const urgentReminders=reminders.filter(r=>!r.done&&r.urgent);
   const dueReminders=reminders.filter(r=>!r.done&&r.due_at&&r.due_at<=new Date().toISOString());
   const alerts=[];
@@ -710,7 +704,7 @@ async function renderDashboard(){
   const upcomingReminders=reminders.filter(r=>!r.done&&r.due_at).sort((a,b)=>a.due_at.localeCompare(b.due_at)).slice(0,3);
   return`
   <div class="page-title">${esc(s.name?`Hey, ${s.name} 👋`:'LifeTrack')}</div>
-  <div class="page-sub">${fmtDate(today())} — ${now.toLocaleDateString('en-US',{weekday:'long'})}</div>
+  <div class="page-sub">${fmtDate(td)} — ${now.toLocaleDateString('en-US',{weekday:'long'})}</div>
   ${alerts.map(a=>`<div class="alert alert-${a.t}">${a.m}</div>`).join('')}
   <div class="card" style="margin-bottom:12px">
     <div class="section-label">Monthly Budget</div>
@@ -751,7 +745,7 @@ async function renderDashboard(){
       <div class="card-row" onclick="go('budget')">
         <div><span style="background:${catColor(e.category)};width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px"></span>${esc(e.name)}<div style="font-size:11px;color:var(--muted)">${esc(e.category)} · ${fmtDate(e.date)}</div></div>
         <div style="color:var(--red);font-weight:600">${fmt(e.amount)}</div>
-      </div>`).join(''):emptyState('','No expenses yet')}
+      </div>`).join(''):emptyState('No expenses yet')}
     <button class="btn btn-ghost btn-sm btn-full" style="margin-top:10px" onclick="go('budget')">View All →</button>
   </div>
   ${upcomingReminders.length?`<div class="card">
@@ -829,7 +823,7 @@ function renderBudgetList(tab,expenses,income){
     return moExp.length?moExp.map(e=>`<div class="list-item" onclick="openExpenseModal('${e.id}')">
       <div class="list-item-header"><span class="list-item-title">${esc(e.name)}</span><span style="color:var(--red);font-weight:700">${fmt(e.amount)}</span></div>
       <div class="list-item-sub"><span style="background:${catColor(e.category)};width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:5px"></span>${esc(e.category)} · ${fmtDate(e.date)}${e.recurring?` · <span class="recur-badge">🔁 recurring</span>`:''}${e.note?` · ${esc(e.note)}`:''}</div>
-    </div>`).join(''):emptyState('','No expenses this month. Tap + to add.');
+    </div>`).join(''):emptyState('No expenses this month. Tap + to add.');
   }
   if(tab==='income'){
     const mo=budgetMonth();
@@ -837,14 +831,14 @@ function renderBudgetList(tab,expenses,income){
     return moInc.length?moInc.map(i=>`<div class="list-item" onclick="openIncomeModal('${i.id}')">
       <div class="list-item-header"><span class="list-item-title">${esc(i.source)}</span><span style="color:var(--blue);font-weight:700">${fmt(i.amount)}</span></div>
       <div class="list-item-sub">${esc(i.category||'Income')} · ${fmtDate(i.date)}</div>
-    </div>`).join(''):emptyState('','No income recorded this month.');
+    </div>`).join(''):emptyState('No income recorded this month.');
   }
   // all time — use the passed income array (already fresh), not the cache
   const all=[...expenses.map(e=>({...e,_type:'exp'})),...income.map(i=>({...i,_type:'inc'}))].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).slice(0,30);
   return all.length?all.map(r=>r._type==='exp'
     ?`<div class="list-item" onclick="openExpenseModal('${r.id}')"><div class="list-item-header"><span class="list-item-title">${esc(r.name)}</span><span style="color:var(--red);font-weight:700">-${fmt(r.amount)}</span></div><div class="list-item-sub">${esc(r.category)} · ${fmtDate(r.date)}</div></div>`
     :`<div class="list-item" onclick="openIncomeModal('${r.id}')"><div class="list-item-header"><span class="list-item-title">${esc(r.source)}</span><span style="color:var(--blue);font-weight:700">+${fmt(r.amount)}</span></div><div class="list-item-sub">${esc(r.category||'Income')} · ${fmtDate(r.date)}</div></div>`
-  ).join(''):emptyState('','No records yet.');
+  ).join(''):emptyState('No records yet.');
 }
 function setBudgetTab(tab,el){
   budgetTab=tab;
@@ -985,7 +979,7 @@ async function renderTasks(){
     <button class="inner-tab ${taskFilter==='pending'?'active':''}" onclick="setTaskFilter('pending',this)">Pending</button>
     <button class="inner-tab ${taskFilter==='done'?'active':''}" onclick="setTaskFilter('done',this)">Done</button>
   </div>
-  <div id="taskList">${filtered.length?filtered.map(taskCard).join(''):emptyState('','No tasks here. Tap + to add.')}</div>`;
+  <div id="taskList">${filtered.length?filtered.map(taskCard).join(''):emptyState('No tasks here. Tap + to add.')}</div>`;
 }
 function taskCard(t){
   const overdue=t.status!=='done'&&t.due_date&&t.due_date<today();
@@ -1028,11 +1022,12 @@ async function toggleTask(id){
 function filterTaskList(){
   const q=(document.getElementById('taskSearch')?.value||'').toLowerCase();
   const tasks=C.get('cache_lt_tasks')||[];
-  const sorted=[...tasks].sort((a,b)=>{if(a.status==='done'&&b.status!=='done')return 1;if(a.status!=='done'&&b.status==='done')return-1;const pri={high:0,medium:1,low:2};return(pri[a.priority]||1)-(pri[b.priority]||1);});
-  const filtered=sorted
+  const PRI={high:0,medium:1,low:2};
+  const filtered=tasks
     .filter(t=>taskFilter==='all'?true:taskFilter==='done'?t.status==='done':t.status!=='done')
-    .filter(t=>!q||(t.title||'').toLowerCase().includes(q)||(t.description||'').toLowerCase().includes(q)||(t.category||'').toLowerCase().includes(q));
-  document.getElementById('taskList').innerHTML=filtered.length?filtered.map(taskCard).join(''):emptyState('','No tasks match your search.');
+    .filter(t=>!q||(t.title||'').toLowerCase().includes(q)||(t.description||'').toLowerCase().includes(q)||(t.category||'').toLowerCase().includes(q))
+    .sort((a,b)=>{if(a.status==='done'!==b.status==='done')return a.status==='done'?1:-1;return(PRI[a.priority]||1)-(PRI[b.priority]||1);});
+  document.getElementById('taskList').innerHTML=filtered.length?filtered.map(taskCard).join(''):emptyState('No tasks match your search.');
 }
 function setTaskFilter(f,el){
   taskFilter=f;
@@ -1041,7 +1036,7 @@ function setTaskFilter(f,el){
   const tasks=C.get('cache_lt_tasks')||[];
   const sorted=[...tasks].sort((a,b)=>{if(a.status==='done'&&b.status!=='done')return 1;if(a.status!=='done'&&b.status==='done')return-1;const pri={high:0,medium:1,low:2};return(pri[a.priority]||1)-(pri[b.priority]||1);});
   const filtered=f==='all'?sorted:f==='done'?sorted.filter(t=>t.status==='done'):sorted.filter(t=>t.status!=='done');
-  document.getElementById('taskList').innerHTML=filtered.length?filtered.map(taskCard).join(''):emptyState('✅','Nothing here.');
+  document.getElementById('taskList').innerHTML=filtered.length?filtered.map(taskCard).join(''):emptyState('Nothing here.');
 }
 function openTaskModal(id=null){
   editingId=id;
@@ -1099,7 +1094,7 @@ async function renderHealth(){
   // Habit completion today
   const habitsDoneToday=habits.filter(h=>todayLogs.some(l=>l.habit_id===h.id&&l.value>0));
   // Weekly streak calculation
-  const last7=[];for(let i=6;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);last7.push(`${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`);}
+  const _ms=Date.now(),_D=86400000;const last7=Array.from({length:7},(_,i)=>{const d=new Date(_ms-(6-i)*_D);return`${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`;});
   return`
   <div class="page-title">Health</div>
   <div class="page-sub">Today — ${fmtDate(today())}</div>
@@ -1138,7 +1133,7 @@ async function renderHealth(){
         ${streak?`<div class="habit-streak">🔥 ${streak}</div>`:''}
         <button onclick="openHabitModal('${h.id}')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:4px">⋯</button>
       </div>`;
-    }).join(''):emptyState('','No habits yet. Add one!')}
+    }).join(''):emptyState('No habits yet. Add one!')}
   </div>
   <div class="card">
     <div class="section-label">This Week</div>
@@ -1156,16 +1151,13 @@ async function renderHealth(){
   </div>`;
 }
 function calcStreak(habitId,logs){
-  // Build a set of dates this habit was logged
   const logDates=new Set(logs.filter(l=>l.habit_id===habitId&&l.value>0).map(l=>l.log_date));
-  let streak=0;
-  const d=new Date();
-  // Start from today and walk backwards
+  let streak=0,ms=Date.now();
+  const DAY=86400000;
   for(let i=0;i<365;i++){
-    const ds=`${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`;
-    if(logDates.has(ds))streak++;
+    const d=new Date(ms-i*DAY);
+    if(logDates.has(`${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`))streak++;
     else break;
-    d.setDate(d.getDate()-1);
   }
   return streak;
 }
@@ -1266,7 +1258,7 @@ async function renderSchedule(){
         ${e.tag?`<div class="timeline-tag">${esc(e.tag)}</div>`:''}
       </div>
       <div onclick="toggleEvent('${e.id}')" style="cursor:pointer;color:${e.done?'var(--accent2)':'var(--muted)'};font-size:18px;padding:0 4px">${e.done?'✓':'○'}</div>
-    </div>`).join(''):emptyState('📅','Nothing scheduled today. Tap + to add.')}
+    </div>`).join(''):emptyState('Nothing scheduled today. Tap + to add.')}
   </div>
   ${upcomingEvents.length?`<div class="card">
     <div class="section-label">Upcoming</div>
@@ -1361,7 +1353,7 @@ async function renderReminders(){
         <button onclick="dismissReminder('${r.id}')" class="btn btn-ghost btn-sm" style="font-size:11px">Done</button>
       </div>
     </div>`;
-  }).join(''):emptyState('','No active reminders. Tap + to add.')}
+  }).join(''):emptyState('No active reminders. Tap + to add.')}
   ${done.length?`<div style="margin-top:16px">
     <div class="section-label" style="margin-bottom:8px">Completed</div>
     ${done.slice(0,5).map(r=>`<div class="reminder-item done">
@@ -1468,7 +1460,6 @@ async function delReminder(id){
 // ═══════════════════════════════════
 //  ALARM SOUND + VIBRATION
 // ═══════════════════════════════════
-let _alarmActive=false;
 
 // ═══════════════════════════════════
 //  ALARM SETTINGS
@@ -1841,7 +1832,7 @@ async function renderNotes(){
   <div class="card" style="padding:8px 12px">
     <input class="form-input" id="noteSearch" placeholder="Search notes…" oninput="filterNoteList()" style="margin:0"/>
   </div>
-  <div id="noteList">${sorted.length?sorted.map(noteCard).join(''):emptyState('','No notes yet. Tap + to write.')}</div>`;
+  <div id="noteList">${sorted.length?sorted.map(noteCard).join(''):emptyState('No notes yet. Tap + to write.')}</div>`;
 }
 function noteCard(n){
   const preview=(n.body||'').slice(0,120)+(n.body?.length>120?'…':'');
@@ -1859,7 +1850,7 @@ function filterNoteList(){
   const filtered=notes
     .sort((a,b)=>(b.updated_at||b.created_at||'').localeCompare(a.updated_at||a.created_at||''))
     .filter(n=>!q||(n.title||'').toLowerCase().includes(q)||(n.body||'').toLowerCase().includes(q)||(n.tag||'').toLowerCase().includes(q));
-  document.getElementById('noteList').innerHTML=filtered.length?filtered.map(noteCard).join(''):emptyState('','No notes match your search.');
+  document.getElementById('noteList').innerHTML=filtered.length?filtered.map(noteCard).join(''):emptyState('No notes match your search.');
 }
 function openNoteModal(id=null){
   editingId=id;
