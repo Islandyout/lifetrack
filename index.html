@@ -1486,6 +1486,8 @@ function playAlarm(urgent=false){
   try{
     const {style,duration,volume}=getAlarmSettings();
     const ctx=new(window.AudioContext||window.webkitAudioContext)();
+    // Android WebView suspends AudioContext until explicitly resumed
+    if(ctx.state==='suspended') ctx.resume();
     const durationMs=duration*1000;
 
     const scheduleNote=(freq,startSec,endSec,type='sine',vol=volume)=>{
@@ -1587,7 +1589,7 @@ async function scheduleNativeAlarm({id,title,body,at,urgent=false}){
         title,
         body,
         schedule:{ at: new Date(at), allowWhileIdle: true },
-        sound: urgent ? 'alarm.wav' : 'beep.wav',
+        sound: 'default',
         smallIcon:'ic_stat_icon_config_sample',
         channelId: urgent ? 'urgent-alarms' : 'reminders',
         extra:{id:String(id),urgent},
@@ -1601,9 +1603,9 @@ async function setupNotificationChannels(){
   const LN=await getLocalNotifications();
   if(!LN)return;
   try{
-    await LN.createChannel({id:'reminders',name:'Reminders',importance:4,sound:'beep.wav',vibration:true});
-    await LN.createChannel({id:'urgent-alarms',name:'Urgent Alarms',importance:5,sound:'alarm.wav',vibration:true,lights:true});
-    await LN.createChannel({id:'schedule',name:'Schedule',importance:3,sound:'beep.wav',vibration:false});
+    await LN.createChannel({id:'reminders',name:'Reminders',importance:4,vibration:true});
+    await LN.createChannel({id:'urgent-alarms',name:'Urgent Alarms',importance:5,vibration:true,lights:true});
+    await LN.createChannel({id:'schedule',name:'Schedule',importance:3,vibration:false});
   }catch(e){ console.warn('Channel setup',e); }
 }
 
