@@ -224,7 +224,6 @@ main{padding:16px 16px 40px;max-width:600px;margin:0 auto;}
 .modal-actions{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 @keyframes slideUp{from{transform:translateY(40px);opacity:0}to{transform:translateY(0);opacity:1}}
-@keyframes splashBar{0%{transform:translateX(-100%)}50%{transform:translateX(0)}100%{transform:translateX(100%)}}
 
 /* HABIT CHECKBOX */
 .habit-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);}
@@ -360,15 +359,6 @@ main{padding:16px 16px 40px;max-width:600px;margin:0 auto;}
 </style>
 </head>
 <body>
-<!-- SPLASH SCREEN -->
-<div id="splash" style="position:fixed;inset:0;z-index:9999;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity .4s ease">
-  <img src="lt-icon-192.png" width="80" height="80" style="border-radius:20px;margin-bottom:20px" onerror="this.style.display='none'"/>
-  <div style="font-family:var(--font-display);font-size:28px;font-weight:700;color:var(--text);margin-bottom:8px">LifeTrack</div>
-  <div style="font-size:13px;color:var(--muted)">Your Life, Tracked</div>
-  <div style="margin-top:32px;width:40px;height:2px;background:var(--border);border-radius:2px;overflow:hidden">
-    <div style="height:100%;background:var(--accent);animation:splashBar 1.2s ease-in-out infinite;border-radius:2px"></div>
-  </div>
-</div>
 <div id="app">
 <nav>
   <button class="nav-hamburger" onclick="toggleDropdown()" aria-label="Menu">
@@ -1479,85 +1469,102 @@ async function delReminder(id){
 //  ALARM SOUND + VIBRATION
 // ═══════════════════════════════════
 let _alarmActive=false;
-let _alarmNodes=[];
+
+// ═══════════════════════════════════
+//  ALARM SETTINGS
+// ═══════════════════════════════════
+function getAlarmSettings(){
+  return {
+    style: localStorage.getItem('lt_alarm_style')||'chime',
+    duration: parseInt(localStorage.getItem('lt_alarm_duration')||'3'),
+    volume: parseFloat(localStorage.getItem('lt_alarm_volume')||'0.7'),
+  };
+}
+
+function saveAlarmSettings(){
+  const style=document.getElementById('al_style')?.value;
+  const duration=document.getElementById('al_duration')?.value;
+  const volume=document.getElementById('al_volume')?.value;
+  if(style) localStorage.setItem('lt_alarm_style',style);
+  if(duration) localStorage.setItem('lt_alarm_duration',duration);
+  if(volume) localStorage.setItem('lt_alarm_volume',(parseFloat(volume)/100).toFixed(2));
+  toast('Alarm settings saved');
+}
 
 function playAlarm(urgent=false){
   try{
+    const {style,duration,volume}=getAlarmSettings();
     const ctx=new(window.AudioContext||window.webkitAudioContext)();
-    _alarmNodes=[];
-    const pattern=urgent?[0,300,350,650,700,1000,1050,1350]:[0,400,500,900];
-    pattern.forEach((start,i)=>{
-      if(i%2!==0)return;
-      const end=pattern[i+1];
+    const durationMs=duration*1000;
+
+    const scheduleNote=(freq,startSec,endSec,type='sine',vol=volume)=>{
       const osc=ctx.createOscillator();
       const gain=ctx.createGain();
-      osc.connect(gain);gain.connect(ctx.destination);
-      osc.frequency.value=urgent?(i===0?880:660):520;
-      osc.type='sine';
-      gain.gain.setValueAtTime(0,ctx.currentTime+start/1000);
-      gain.gain.linearRampToValueAtTime(0.6,ctx.currentTime+start/1000+0.05);
-      gain.gain.linearRampToValueAtTime(0,ctx.currentTime+end/1000);
-      osc.start(ctx.currentTime+start/1000);
-      osc.stop(ctx.currentTime+end/1000+0.1);
-      _alarmNodes.push(osc);
-    });
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.frequency.value=freq; osc.type=type;
+      gain.gain.setValueAtTime(0,ctx.currentTime+startSec);
+      gain.gain.linearRampToValueAtTime(vol,ctx.currentTime+startSec+0.03);
+      gain.gain.linearRampToValueAtTime(0,ctx.currentTime+endSec);
+      osc.start(ctx.currentTime+startSec);
+      osc.stop(ctx.currentTime+endSec+0.05);
+    };
+
+    const actualStyle = urgent ? 'siren' : style;
+
+    if(actualStyle==='chime'){
+      // Gentle ascending chime — repeats to fill duration
+      const notes=[523,659,784,1047];
+      let t=0;
+      while(t < duration){
+        notes.forEach((f,i)=>scheduleNote(f,t+i*0.22,t+i*0.22+0.35));
+        t += notes.length*0.22 + 0.4;
+      }
+    } else if(actualStyle==='beep'){
+      // Classic beep pattern
+      let t=0;
+      while(t < duration){
+        scheduleNote(880,t,t+0.15,'square',volume*0.5);
+        t+=0.3;
+      }
+    } else if(actualStyle==='siren'){
+      // Rising urgent siren
+      const osc=ctx.createOscillator();
+      const gain=ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.type='sawtooth';
+      gain.gain.setValueAtTime(volume*0.4,ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(0,ctx.currentTime+duration);
+      osc.frequency.setValueAtTime(440,ctx.currentTime);
+      for(let i=0;i<duration*4;i++){
+        osc.frequency.linearRampToValueAtTime(i%2===0?880:440,ctx.currentTime+i*0.25);
+      }
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime+duration);
+    } else if(actualStyle==='bell'){
+      // Rich bell tone — decaying
+      let t=0;
+      while(t < duration){
+        scheduleNote(659,t,t+0.8,'sine',volume);
+        scheduleNote(987,t,t+0.6,'sine',volume*0.5);
+        t+=1.2;
+      }
+    }
+
     if(navigator.vibrate){
-      navigator.vibrate(urgent?[300,100,300,100,600]:[200,100,200]);
+      const pat=urgent?[300,100,300,100,600,100,300]:[200,100,200];
+      // Repeat vibration for duration
+      const fullPat=[];
+      let total=0;
+      while(total<durationMs){ fullPat.push(...pat,300); total+=pat.reduce((a,b)=>a+b,0)+300; }
+      navigator.vibrate(fullPat);
     }
   }catch(e){}
 }
 
-function playScheduleChime(){
-  try{
-    const ctx=new(window.AudioContext||window.webkitAudioContext)();
-    // Gentle 3-note chime
-    [[523,0],[659,0.25],[784,0.5]].forEach(([freq,delay])=>{
-      const osc=ctx.createOscillator();
-      const gain=ctx.createGain();
-      osc.connect(gain);gain.connect(ctx.destination);
-      osc.frequency.value=freq;osc.type='sine';
-      gain.gain.setValueAtTime(0,ctx.currentTime+delay);
-      gain.gain.linearRampToValueAtTime(0.4,ctx.currentTime+delay+0.05);
-      gain.gain.linearRampToValueAtTime(0,ctx.currentTime+delay+0.6);
-      osc.start(ctx.currentTime+delay);
-      osc.stop(ctx.currentTime+delay+0.7);
-    });
-    if(navigator.vibrate)navigator.vibrate([100,50,100]);
-  }catch(e){}
+function stopAlarm(){
+  if(navigator.vibrate) navigator.vibrate(0);
+  // Audio stops naturally
 }
-
-// Show in-app alarm modal for reminders
-function showAlarmModal(title,body,id,urgent){
-  // Don't stack alarm modals
-  if(document.getElementById('alarm-modal'))return;
-  const div=document.createElement('div');
-  div.id='alarm-modal';
-  div.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;padding:20px';
-  div.innerHTML=`
-    <div style="background:var(--surface);border:1px solid ${urgent?'var(--red)':'var(--border)'};border-radius:16px;padding:28px 24px;max-width:340px;width:100%;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.8)">
-      <div style="font-size:36px;margin-bottom:12px">${urgent?'🚨':'🔔'}</div>
-      <div style="font-size:18px;font-weight:700;color:var(--text);margin-bottom:8px">${title}</div>
-      <div style="font-size:14px;color:var(--muted);margin-bottom:24px;line-height:1.5">${body}</div>
-      <div style="display:flex;gap:10px;justify-content:center">
-        <button onclick="dismissAlarmModal('${id}')" style="flex:1;padding:12px;background:var(--accent2);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer">Dismiss</button>
-        <button onclick="snoozeAlarmModal('${id}')" style="flex:1;padding:12px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:10px;font-size:14px;font-weight:600;cursor:pointer">Snooze 1hr</button>
-      </div>
-    </div>`;
-  document.body.appendChild(div);
-}
-function dismissAlarmModal(id){
-  document.getElementById('alarm-modal')?.remove();
-  if(id)dismissReminder(id);
-}
-function snoozeAlarmModal(id){
-  document.getElementById('alarm-modal')?.remove();
-  if(id)snoozeReminder(id);
-}
-
-// ═══════════════════════════════════
-//  REMINDER ALARM CHECK
-// ═══════════════════════════════════
-const _alertedReminders=new Set();
 
 // ─── Capacitor Native Notifications ───
 const isNative = () => !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
@@ -1565,7 +1572,6 @@ const isNative = () => !!(window.Capacitor && window.Capacitor.isNativePlatform 
 async function getLocalNotifications(){
   if(!isNative()) return null;
   try{
-    // Capacitor plugins are injected as globals in the native APK
     const LN = window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications;
     return LN || null;
   }catch{ return null; }
@@ -1574,50 +1580,48 @@ async function getLocalNotifications(){
 async function requestNativeNotifPerm(){
   const LN=await getLocalNotifications();
   if(!LN)return;
-  await LN.requestPermissions();
+  try{ await LN.requestPermissions(); }catch(e){ console.warn('notif perm',e); }
 }
 
-// Schedule a native alarm (fires even when app is closed)
 async function scheduleNativeAlarm({id,title,body,at,urgent=false}){
   const LN=await getLocalNotifications();
   if(!LN)return false;
   try{
+    const notifId=Math.abs(hashCode(String(id)))%2000000000||1;
+    // Cancel any existing alarm with this id first
+    try{ await LN.cancel({notifications:[{id:notifId}]}); }catch{}
     await LN.schedule({
       notifications:[{
-        id: Math.abs(hashCode(id)) % 2147483647,
+        id: notifId,
         title,
         body,
-        schedule:{at:new Date(at)},
+        schedule:{ at: new Date(at), allowWhileIdle: true },
         sound: urgent ? 'alarm.wav' : 'beep.wav',
         smallIcon:'ic_stat_icon_config_sample',
-        extra:{id,urgent},
         channelId: urgent ? 'urgent-alarms' : 'reminders',
+        extra:{id:String(id),urgent},
       }]
     });
     return true;
-  }catch(e){console.warn('Native alarm failed',e);return false;}
+  }catch(e){ console.warn('Native alarm failed',e); return false; }
 }
 
-// Create notification channels on Android (needed for alarm sounds)
 async function setupNotificationChannels(){
   const LN=await getLocalNotifications();
   if(!LN)return;
   try{
     await LN.createChannel({id:'reminders',name:'Reminders',importance:4,sound:'beep.wav',vibration:true});
     await LN.createChannel({id:'urgent-alarms',name:'Urgent Alarms',importance:5,sound:'alarm.wav',vibration:true,lights:true});
-    await LN.createChannel({id:'schedule',name:'Schedule',importance:4,sound:'beep.wav',vibration:true});
-  }catch{}
+    await LN.createChannel({id:'schedule',name:'Schedule',importance:3,sound:'beep.wav',vibration:false});
+  }catch(e){ console.warn('Channel setup',e); }
 }
 
 function hashCode(str){
   let h=0;for(let i=0;i<str.length;i++){h=Math.imul(31,h)+str.charCodeAt(i)|0;}return h;
 }
 
-function fireNotification(title,body,tag,urgent=false){
-  if(isNative()){
-    // On native — native notification handles it, no need for SW
-    return;
-  }
+// ─── Web notification (PWA / browser) ───
+function firePushNotification(title,body,tag,urgent=false){
   if('serviceWorker' in navigator&&navigator.serviceWorker.controller){
     navigator.serviceWorker.controller.postMessage({type:'NOTIFY',title,body,tag,icon:'lt-icon-192.png',urgent});
   }else if('Notification' in window&&Notification.permission==='granted'){
@@ -1625,48 +1629,97 @@ function fireNotification(title,body,tag,urgent=false){
   }
 }
 
+// ─── Unified trigger: notification + alarm + modal all together ───
+function triggerAlarm(title, body, tag, id, urgent=false){
+  // 1. Push notification (works backgrounded on web)
+  firePushNotification(title, body, tag, urgent);
+  // 2. Audio alarm (foreground only — same timing as notification)
+  playAlarm(urgent);
+  // 3. In-app modal
+  showAlarmModal(title, body, id, urgent);
+  updateBadges();
+}
+
+// ─── CHECK REMINDERS (polling, foreground only) ───
+const _alertedReminders=new Set();
+
 function checkReminders(){
   const reminders=C.get('cache_lt_reminders')||[];
-  const now=new Date().toISOString();
-  reminders.filter(r=>!r.done&&r.due_at&&r.due_at<=now).forEach(r=>{
-    if(_alertedReminders.has(r.id))return;
-    _alertedReminders.add(r.id);
-    const title='LifeTrack Reminder'+(r.urgent?' — URGENT':'');
-    fireNotification(title,r.text,'reminder-'+r.id,r.urgent);
-    playAlarm(r.urgent);
-    showAlarmModal(title,r.text,r.id,r.urgent);
-    updateBadges();
+  const now=Date.now();
+  reminders.filter(r=>!r.done&&r.due_at).forEach(r=>{
+    const due=new Date(r.due_at).getTime();
+    // Fire if within 10s past due (matches poll interval), not already fired
+    if(due<=now && (now-due)<10000 && !_alertedReminders.has(r.id)){
+      _alertedReminders.add(r.id);
+      const title='LifeTrack Reminder'+(r.urgent?' — URGENT':'');
+      triggerAlarm(title, r.text, 'reminder-'+r.id, r.id, r.urgent);
+    }
   });
 }
 
-async function scheduleNotification(due_at,text,id,urgent){
-  if(!due_at)return;
-  const ms=new Date(due_at)-Date.now();
-  if(ms<=0||ms>14*24*60*60*1000)return;
+// ─── SCHEDULE notifications for future reminders ───
+async function scheduleNotification(due_at, text, id, urgent){
+  if(!due_at) return;
+  const ms = new Date(due_at).getTime() - Date.now();
+  if(ms <= 0) return; // already past — checkReminders handles these
+  if(ms > 14*24*60*60*1000) return; // more than 14 days away — skip
 
-  // Native APK — use Capacitor Local Notifications (fires even when app is closed)
+  const title='LifeTrack Reminder'+(urgent?' — URGENT':'');
+
   if(isNative()){
-    const title='LifeTrack Reminder'+(urgent?' — URGENT':'');
-    const didSchedule=await scheduleNativeAlarm({id,title,body:text,at:due_at,urgent});
-    if(didSchedule)return;
+    // Native: schedule OS alarm — fires even when app is fully closed
+    await scheduleNativeAlarm({id,title,body:text,at:due_at,urgent});
+    // ALSO set a JS timer for the in-app modal + sound when app IS open
+    setTimeout(()=>{
+      if(_alertedReminders.has(id)) return;
+      _alertedReminders.add(id);
+      playAlarm(urgent);
+      showAlarmModal(title,text,id,urgent);
+      updateBadges();
+    }, ms);
+  } else {
+    // Web: setTimeout for in-app + SW notification
+    setTimeout(()=>{
+      if(_alertedReminders.has(id)) return;
+      _alertedReminders.add(id);
+      triggerAlarm(title, text, 'reminder-'+id, id, urgent);
+    }, ms);
   }
-
-  // Web fallback — setTimeout (only fires when app is open/minimized)
-  setTimeout(()=>{
-    if(_alertedReminders.has(id))return;
-    _alertedReminders.add(id);
-    const title='LifeTrack Reminder'+(urgent?' — URGENT':'');
-    fireNotification(title,text,'reminder-'+id,urgent);
-    playAlarm(urgent);
-    showAlarmModal(title,text,id,urgent);
-    updateBadges();
-  },ms);
 }
 
 function scheduleAllReminders(){
   const reminders=C.get('cache_lt_reminders')||[];
   reminders.filter(r=>!r.done&&r.due_at).forEach(r=>scheduleNotification(r.due_at,r.text,r.id,r.urgent));
 }
+
+// Show in-app alarm modal
+function showAlarmModal(title,body,id,urgent){
+  if(document.getElementById('alarm-modal'))return;
+  const div=document.createElement('div');
+  div.id='alarm-modal';
+  div.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.88);display:flex;align-items:center;justify-content:center;padding:20px';
+  div.innerHTML=`
+    <div style="background:var(--surface);border:2px solid ${urgent?'var(--red)':'var(--border)'};border-radius:20px;padding:32px 24px;max-width:340px;width:100%;text-align:center;box-shadow:0 8px 48px rgba(0,0,0,.9)">
+      <div style="font-size:40px;margin-bottom:14px">${urgent?'🚨':'🔔'}</div>
+      <div style="font-size:19px;font-weight:700;color:var(--text);margin-bottom:8px">${title}</div>
+      <div style="font-size:14px;color:var(--muted);margin-bottom:28px;line-height:1.5">${body}</div>
+      <div style="display:flex;gap:10px">
+        <button onclick="stopAlarm();dismissAlarmModal('${id}')" style="flex:1;padding:13px;background:var(--accent);color:var(--bg);border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer">Dismiss</button>
+        <button onclick="stopAlarm();snoozeAlarmModal('${id}')" style="flex:1;padding:13px;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:10px;font-size:14px;font-weight:600;cursor:pointer">Snooze 1hr</button>
+      </div>
+    </div>`;
+  document.body.appendChild(div);
+}
+function dismissAlarmModal(id){
+  document.getElementById('alarm-modal')?.remove();
+  if(id) dismissReminder(id);
+}
+function snoozeAlarmModal(id){
+  document.getElementById('alarm-modal')?.remove();
+  if(id) snoozeReminder(id);
+}
+
+
 
 // ═══════════════════════════════════
 //  SCHEDULE EVENT NOTIFICATIONS
@@ -1687,8 +1740,8 @@ async function scheduleEventNotifications(events){
         setTimeout(()=>{
           if(_alertedReminders.has(morningKey))return;
           _alertedReminders.add(morningKey);
-          fireNotification('Today: '+e.title,(e.time?'At '+fmtTime(e.time)+' — ':'')+( e.tag||e.notes||''),'sched-'+e.id+'-morning');
-          playScheduleChime();
+          firePushNotification('Today: '+e.title,(e.time?'At '+fmtTime(e.time)+' — ':'')+( e.tag||e.notes||''),'sched-'+e.id+'-morning');
+          playAlarm(false);
         },morningMs);
       }
     }
@@ -1704,8 +1757,8 @@ async function scheduleEventNotifications(events){
           setTimeout(()=>{
             if(_alertedReminders.has(oneHrKey))return;
             _alertedReminders.add(oneHrKey);
-            fireNotification('In 1 hour: '+e.title,'At '+fmtTime(e.time)+(e.tag?' · '+e.tag:''),'sched-'+e.id+'-1hr');
-            playScheduleChime();
+            firePushNotification('In 1 hour: '+e.title,'At '+fmtTime(e.time)+(e.tag?' · '+e.tag:''),'sched-'+e.id+'-1hr');
+            playAlarm(false);
           },oneHrMs);
         }
       }
@@ -1718,8 +1771,8 @@ async function scheduleEventNotifications(events){
           setTimeout(()=>{
             if(_alertedReminders.has(atKey))return;
             _alertedReminders.add(atKey);
-            fireNotification('Starting now: '+e.title,(e.tag||e.notes||'Now'),'sched-'+e.id+'-now');
-            playScheduleChime();
+            firePushNotification('Starting now: '+e.title,(e.tag||e.notes||'Now'),'sched-'+e.id+'-now');
+            playAlarm(false);
           },atMs);
         }
       }
@@ -1740,11 +1793,12 @@ function checkTasksDue(){
     const key='task-'+tk.id;
     if(_alertedReminders.has(key))return;
     _alertedReminders.add(key);
-    fireNotification('Task Due Today',tk.title,'task-'+tk.id);
+    firePushNotification('Task Due Today',tk.title,'task-'+tk.id);
   });
 }
 
-setInterval(checkReminders,30000); // check every 30s
+// Smart poller — checks every 10s but only triggers within a 10s window of due time
+setInterval(checkReminders, 10000);
 
 
 
@@ -1848,6 +1902,7 @@ function renderSettings(){
   const s=getSettings();
   const avatarImg=localStorage.getItem('lt_avatar');
   const notifStatus = isNative() ? 'native (always on)' : ('Notification' in window ? Notification.permission : 'not supported');
+  const al=getAlarmSettings();
   return`
   <div class="page-title">Settings</div>
   <div class="page-sub">Your preferences and account</div>
@@ -1875,13 +1930,39 @@ function renderSettings(){
     <div class="card-row">
       <span class="card-label">Push Notifications</span>
       <button class="btn btn-ghost btn-sm" onclick="requestNotifPermIfNeeded().then(()=>renderPage())">
-        ${notifStatus==='granted'?'Enabled':'Enable'}
+        ${notifStatus==='granted'||notifStatus==='native (always on)'?'Enabled':'Enable'}
       </button>
     </div>
     <div class="card-row" style="border-bottom:none">
       <span class="card-label">Status</span>
-      <span style="font-size:13px;color:${notifStatus==='granted'?'#5aab7a':notifStatus==='denied'?'var(--red)':'var(--muted)'}">${notifStatus}</span>
+      <span style="font-size:13px;color:${notifStatus==='granted'||notifStatus==='native (always on)'?'#5aab7a':notifStatus==='denied'?'var(--red)':'var(--muted)'}">${notifStatus}</span>
     </div>
+  </div>
+
+  <div class="card">
+    <div class="section-label" style="margin-bottom:14px">Alarm Sound</div>
+    <div class="form-group">
+      <label class="form-label">Sound Style</label>
+      <select class="form-select" id="al_style" onchange="saveAlarmSettings()">
+        <option value="chime" ${al.style==='chime'?'selected':''}>Chime (gentle ascending)</option>
+        <option value="beep" ${al.style==='beep'?'selected':''}>Beep (classic)</option>
+        <option value="bell" ${al.style==='bell'?'selected':''}>Bell (rich tone)</option>
+        <option value="siren" ${al.style==='siren'?'selected':''}>Siren (urgent only)</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Duration: <span id="al_dur_label">${al.duration}s</span></label>
+      <input type="range" min="1" max="10" value="${al.duration}" style="width:100%;accent-color:var(--accent)"
+        oninput="document.getElementById('al_dur_label').textContent=this.value+'s'"
+        onchange="saveAlarmSettings()" id="al_duration"/>
+    </div>
+    <div class="form-group" style="margin-bottom:0">
+      <label class="form-label">Volume: <span id="al_vol_label">${Math.round(al.volume*100)}%</span></label>
+      <input type="range" min="0" max="100" value="${Math.round(al.volume*100)}" style="width:100%;accent-color:var(--accent)"
+        oninput="document.getElementById('al_vol_label').textContent=this.value+'%'"
+        onchange="saveAlarmSettings()" id="al_volume"/>
+    </div>
+    <button class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="playAlarm(false)">Preview Sound</button>
   </div>
 
   <div class="card">
@@ -2105,44 +2186,30 @@ async function requestNotifPermIfNeeded(){
 
 async function init(){
   applyTheme();
-  isOnline = navigator.onLine;
-
-  // Show dashboard immediately — don't wait for network
-  go('dashboard');
-  // Dismiss splash
-  setTimeout(()=>{
-    const s=document.getElementById('splash');
-    if(s){s.style.opacity='0';setTimeout(()=>s.remove(),400);}
-  }, 600);
-
-  // Network check in background
+  isOnline=navigator.onLine;
   if(isOnline){
     try{
       await sb.from('lt_reminders').select('count',{count:'exact',head:true});
       setSync('live','Live');
     }catch{
+      // DB reachable but query failed — still treat as online, individual ops will retry
       setSync('live','Live');
     }
   }else{
     setSync('err','Offline');
   }
-
-  // Service worker
   if('serviceWorker' in navigator){
-    try{ await navigator.serviceWorker.register('lt-sw.js'); }catch(e){}
+    try{await navigator.serviceWorker.register('lt-sw.js');await navigator.serviceWorker.ready;}catch(e){}
   }
-
-  // Notifications — never block dashboard
-  try{
-    if(isNative()){
-      await setupNotificationChannels();
-      await requestNativeNotifPerm();
-    } else {
-      await requestNotifPermIfNeeded();
-    }
-  }catch(e){ console.warn('Notif setup failed',e); }
-
+  // Native APK setup
+  if(isNative()){
+    await setupNotificationChannels();
+    await requestNativeNotifPerm();
+  } else {
+    await requestNotifPermIfNeeded();
+  }
   updateDrawerProfile();
+  go('dashboard');
   checkReminders();
   scheduleAllReminders();
   scheduleAllEvents();
