@@ -1,0 +1,114 @@
+name: Build LifeTrack APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          rm -f package-lock.json
+          npm install
+
+      - name: Prepare www folder
+        run: |
+          mkdir -p www
+          cp index.html www/index.html
+          cp lt-manifest.json www/lt-manifest.json
+          cp lt-sw.js www/lt-sw.js
+          cp lt-icon-192.png www/lt-icon-192.png
+          cp lt-icon-512.png www/lt-icon-512.png
+          echo "www contents:"
+          ls -la www/
+
+      - name: Add Android platform
+        run: |
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Copy icons to Android resources
+        run: |
+          mkdir -p android/app/src/main/res/mipmap-hdpi
+          mkdir -p android/app/src/main/res/mipmap-mdpi
+          mkdir -p android/app/src/main/res/mipmap-xhdpi
+          mkdir -p android/app/src/main/res/mipmap-xxhdpi
+          mkdir -p android/app/src/main/res/mipmap-xxxhdpi
+          cp lt-icon-192.png android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+          cp lt-icon-192.png android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png
+          cp lt-icon-512.png android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          cp lt-icon-512.png android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
+
+      - name: Copy sound files to Android raw resources
+        run: |
+          mkdir -p android/app/src/main/res/raw
+          # Fail loudly if WAV files are missing from repo
+          if [ ! -f "notify.wav" ]; then echo "ERROR: notify.wav missing from repo root" && exit 1; fi
+          if [ ! -f "alarm.wav" ]; then echo "ERROR: alarm.wav missing from repo root" && exit 1; fi
+          cp notify.wav android/app/src/main/res/raw/notify.wav
+          cp alarm.wav android/app/src/main/res/raw/alarm.wav
+          echo "Raw resources:"
+          ls -la android/app/src/main/res/raw/
+          # Verify Gradle will find them
+          echo "Resource verification:"
+          file android/app/src/main/res/raw/*.wav
+
+      - name: Make Gradlew executable
+        run: chmod +x android/gradlew
+
+      - name: Build debug APK
+        run: cd android && ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Verify APK exists
+        run: |
+          APK_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
+          if [ -f "$APK_PATH" ]; then
+            echo "APK built: $(du -sh $APK_PATH)"
+          else
+            echo "APK not found"
+            find android/app/build/outputs -name "*.apk" 2>/dev/null || true
+            exit 1
+          fi
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LifeTrack-APK-build${{ github.run_number }}
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: LifeTrack Build ${{ github.run_number }}
+          body: |
+            Download app-debug.apk and install on your Android phone.
+            If blocked: Settings -> Security -> Install unknown apps -> Allow
+          files: android/app/build/outputs/apk/debug/app-debug.apk
+          token: ${{ secrets.GITHUB_TOKEN }}
