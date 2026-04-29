@@ -1583,17 +1583,22 @@ async function scheduleNativeAlarm({id,title,body,at,urgent=false}){
     const notifId=Math.abs(hashCode(String(id)))%2000000000||1;
     // Cancel any existing alarm with this id first
     try{ await LN.cancel({notifications:[{id:notifId}]}); }catch{}
+    // Use Android system notification sound URI directly.
+    // This bypasses the plugin's sound resolution which can return null
+    // and silently create a soundless notification.
+    const soundUri=urgent
+      ?'content://settings/system/alarm_alert'      // alarm stream
+      :'content://settings/system/notification_sound'; // notification stream
+
     await LN.schedule({
       notifications:[{
         id: notifId,
         title,
         body,
         schedule:{ at: new Date(at), allowWhileIdle: true },
-        sound: 'default',
+        sound: soundUri,
         smallIcon:'ic_stat_icon_config_sample',
         channelId: urgent ? 'urgent-alarms' : 'reminders',
-        // fullScreenIntent shows alarm screen even if phone is locked
-        // wakeScreen wakes the display when notification fires
         fullScreenIntent: urgent,
         group: 'lifetrack',
         extra:{id:String(id),urgent},
@@ -1607,9 +1612,24 @@ async function setupNotificationChannels(){
   const LN=await getLocalNotifications();
   if(!LN)return;
   try{
-    await LN.createChannel({id:'reminders',name:'Reminders',importance:4,vibration:true});
-    await LN.createChannel({id:'urgent-alarms',name:'Urgent Alarms',importance:5,vibration:true,lights:true});
-    await LN.createChannel({id:'schedule',name:'Schedule',importance:3,vibration:false});
+    // Delete old channels first — Android caches channel settings on first creation.
+    // If they were created without sound (e.g. missing wav), they stay silent forever
+    // unless deleted and recreated. Only runs once per install effectively.
+    const channelVersion='lt_ch_v3';
+    if(!localStorage.getItem(channelVersion)){
+      try{
+        await LN.deleteChannel({id:'reminders'});
+        await LN.deleteChannel({id:'urgent-alarms'});
+        await LN.deleteChannel({id:'schedule'});
+      }catch{}
+      localStorage.setItem(channelVersion,'1');
+    }
+    // Recreate with proper sound.
+    // 'default' maps to the system default notification sound on Android.
+    // importance 4 = HIGH (makes sound+heads-up), importance 5 = MAX (urgent)
+    await LN.createChannel({id:'reminders',name:'LifeTrack Reminders',importance:4,sound:'default',vibration:true});
+    await LN.createChannel({id:'urgent-alarms',name:'LifeTrack Urgent',importance:5,sound:'default',vibration:true,lights:true});
+    await LN.createChannel({id:'schedule',name:'LifeTrack Schedule',importance:4,sound:'default',vibration:true});
   }catch(e){ console.warn('Channel setup',e); }
 }
 
